@@ -1,0 +1,10 @@
+[package]
+name = "awpro"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hidapi = "2.6.5"
+clap = { version = "4.5.60", features = ["derive"] }
+zbus = { version = "5.14.0", default-features = false, features = ["tokio"] }
+tokio = { version = "1.50.0", features = ["full"] }
