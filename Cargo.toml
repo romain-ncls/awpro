@@ -2,9 +2,13 @@
 name = "awpro"
 version = "0.1.0"
 edition = "2024"
+description = "CLI controller for the Dell Alienware Pro Wireless Gaming Headset"
+
+[[bin]]
+name = "awpro"
+path = "src/main.rs"
 
 [dependencies]
-hidapi = "2.6.5"
-clap = { version = "4.5.60", features = ["derive"] }
-zbus = { version = "5.14.0", default-features = false, features = ["tokio"] }
-tokio = { version = "1.50.0", features = ["full"] }
+clap = { version = "=4.5.23", features = ["derive"] }
+hidapi = "=2.6.5"
+serde_json = "=1.0.133"
