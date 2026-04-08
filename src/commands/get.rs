@@ -66,7 +66,7 @@ fn get_anc(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
 fn get_mic_mute(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
     let buf = device::query(device, 0x76)?;
     // Response: 07 C0 76 01 00 <muted>
-    let muted = buf[5] != 0;
+    let muted = buf[5] == 0;
     let plain = if muted { "muted" } else { "unmuted" };
     output::print(plain, json!({ "muted": muted }), json);
     Ok(())

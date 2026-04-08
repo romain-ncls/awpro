@@ -9,8 +9,8 @@ pub const VENDOR_ID: u16 = 0x413c;
 pub const PRODUCT_ID: u16 = 0xa529;
 
 const REPORT_LEN: usize = 62;
-const POLL_RETRIES: usize = 50;
-const POLL_DELAY_MS: u64 = 100;
+const POLL_RETRIES: usize = 20;
+const POLL_DELAY_MS: u64 = 20;
 
 pub fn open(api: &HidApi) -> Result<HidDevice, AppError> {
     api.open(VENDOR_ID, PRODUCT_ID)
@@ -32,8 +32,8 @@ pub fn write(device: &HidDevice, payload: &[u8]) -> Result<(), AppError> {
 /// Issue a GET query (Report ID 6, byte[1] = 0xC0) and poll for the response
 /// (Report ID 7, matched on buf[1] == 0xC0 && buf[2] == cmd).
 ///
-/// Returns the full 62-byte response buffer on success.
-pub fn query(device: &HidDevice, cmd: u8) -> Result<[u8; REPORT_LEN], AppError> {
+/// Returns the full response buffer (index 0 = report ID 0x07) on success.
+pub fn query(device: &HidDevice, cmd: u8) -> Result<[u8; REPORT_LEN + 1], AppError> {
     let mut req = [0u8; REPORT_LEN];
     req[0] = 0x06;
     req[1] = 0xC0;
@@ -42,7 +42,10 @@ pub fn query(device: &HidDevice, cmd: u8) -> Result<[u8; REPORT_LEN], AppError> 
         .send_feature_report(&req)
         .map_err(|e| AppError::HidWrite(e.to_string()))?;
 
-    let mut buf = [0u8; REPORT_LEN];
+    // get_feature_report returns: [report_id, payload...], so buf must be
+    // REPORT_LEN + 1 bytes to hold Report ID 7 (0x07) plus 62 data bytes.
+    let mut buf = [0u8; REPORT_LEN + 1];
+    buf[0] = 0x07; // pre-set report ID so hidraw knows which report to fetch
     for _ in 0..POLL_RETRIES {
         thread::sleep(Duration::from_millis(POLL_DELAY_MS));
         match device.get_feature_report(&mut buf) {
