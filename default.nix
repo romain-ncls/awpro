@@ -1,7 +1,15 @@
-{ lib, rustPlatform, libudev-zero, pkg-config }:
+{
+  lib,
+  rustPlatform,
+  libudev-zero,
+  pkg-config,
+}:
+let
+  manifest = (lib.importTOML ./Cargo.toml).package;
+in
 rustPlatform.buildRustPackage {
-  pname = "awpro";
-  version = "0.0.1";
+  pname = manifest.name;
+  version = manifest.version;
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [ libudev-zero ];
