@@ -1,6 +1,7 @@
 debug/
 target/
 result/
+result
 
 .idea
 .vscode

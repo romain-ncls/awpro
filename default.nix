@@ -1,18 +1,11 @@
-{
-  pkgs ? import <nixpkgs> { },
-}:
-pkgs.rustPlatform.buildRustPackage rec {
+{ lib, rustPlatform, libudev-zero, pkg-config }:
+rustPlatform.buildRustPackage {
   pname = "awpro";
   version = "0.0.1";
 
-  nativeBuildInputs = with pkgs; [
-    pkg-config
-  ];
-
-  buildInputs = with pkgs; [
-    libudev-zero
-  ];
+  nativeBuildInputs = [ pkg-config ];
+  buildInputs = [ libudev-zero ];
 
   cargoLock.lockFile = ./Cargo.lock;
-  src = pkgs.lib.cleanSource ./.;
+  src = lib.cleanSource ./.;
 }

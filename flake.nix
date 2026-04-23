@@ -23,7 +23,7 @@
     in
     {
       packages = forAllSystems (system: {
-        awpro = (pkgsFor system).callPackage ./default.nix { };
+        awpro = (pkgsFor system).pkgsStatic.callPackage ./default.nix { };
         default = self.packages.${system}.awpro;
       });
       devShells = forAllSystems (system: {
