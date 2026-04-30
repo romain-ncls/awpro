@@ -86,9 +86,8 @@ fn get_mic_nc(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
 // ── Sidetone ──────────────────────────────────────────────────────────────────
 
 fn get_sidetone(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
-    // GET command for sidetone is not confirmed — timeout treated as error
-    // using same query as mic anc and using byte 8
     let buf = device::query(device, 0x80)?;
+    // Response: 07 C0 80 ... <sidetone_level at byte 8>
     let level = buf[8];
     let plain = match level {
         0 => "off".to_string(),

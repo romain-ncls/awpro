@@ -31,12 +31,25 @@ pub fn write(device: &HidDevice, payload: &[u8]) -> Result<(), AppError> {
 
 /// Read and discard any pending feature reports the device may have queued
 /// as an acknowledgement to a write command.
+///
+/// Polls up to POLL_RETRIES times so that a slow wireless ACK (which may
+/// arrive after the initial sleep) is still consumed rather than left to
+/// contaminate the next query's poll loop.
 fn drain(device: &HidDevice) {
     let mut buf = [0u8; REPORT_LEN + 1];
     buf[0] = 0x07;
-    // Give the device a moment to queue the ACK, then flush it.
-    thread::sleep(Duration::from_millis(20));
-    let _ = device.get_feature_report(&mut buf);
+    for i in 0..POLL_RETRIES {
+        if i > 0 {
+            thread::sleep(Duration::from_millis(POLL_DELAY_MS));
+        }
+        if let Ok(_) = device.get_feature_report(&mut buf) {
+            // Stop as soon as we read a populated ACK report (non-zero header byte).
+            // An all-zero buffer means the device hasn't written anything yet.
+            if buf[1] != 0 {
+                return;
+            }
+        }
+    }
 }
 
 /// Issue a GET query (Report ID 6, byte[1] = 0xC0) and poll for the response
@@ -54,15 +67,26 @@ pub fn query(device: &HidDevice, cmd: u8) -> Result<[u8; REPORT_LEN + 1], AppErr
     // REPORT_LEN + 1 bytes to hold Report ID 7 (0x07) plus 62 data bytes.
     let mut buf = [0u8; REPORT_LEN + 1];
     buf[0] = 0x07; // pre-set report ID so hidraw knows which report to fetch
-    for _ in 0..POLL_RETRIES {
-        thread::sleep(Duration::from_millis(POLL_DELAY_MS));
+    let mut consecutive_errors: usize = 0;
+    for i in 0..POLL_RETRIES {
+        // Sleep after the first attempt so a fast device response is caught
+        // immediately rather than always waiting at least POLL_DELAY_MS.
+        if i > 0 {
+            thread::sleep(Duration::from_millis(POLL_DELAY_MS));
+        }
         match device.get_feature_report(&mut buf) {
             Ok(_) => {
+                consecutive_errors = 0;
                 if buf[1] == 0xC0 && buf[2] == cmd {
                     return Ok(buf);
                 }
             }
-            Err(_) => {}
+            Err(e) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= 3 {
+                    return Err(AppError::HidWrite(e.to_string()));
+                }
+            }
         }
     }
     Err(AppError::Timeout)
