@@ -16,4 +16,8 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ./Cargo.lock;
   src = lib.cleanSource ./.;
+
+  postFixup = ''
+    rm $out/nix-support/propagated-build-inputs
+  '';
 }
