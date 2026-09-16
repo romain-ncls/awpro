@@ -1,17 +1,14 @@
-use hidapi::HidApi;
+use hidapi::HidDevice;
 use serde_json::json;
 
 use crate::device;
 use crate::error::AppError;
 use crate::output;
+use crate::protocol::{self, op};
 
-pub fn run(json: bool) -> Result<(), AppError> {
-    let api = HidApi::new().map_err(|_| AppError::DeviceNotFound)?;
-    let device = device::open(&api)?;
-
-    let buf = device::query(&device, 0x0A)?;
-    // Response: 07 C0 0A 0A 00 00 <level>
-    let level = buf[6] as u32;
+pub fn run(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
+    let reply = device::query(device_handle, op::BATTERY)?;
+    let level = protocol::parse_battery(&reply);
 
     output::print(&format!("{level}%"), json!({ "level": level }), json);
     Ok(())

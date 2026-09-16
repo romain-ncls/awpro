@@ -48,9 +48,9 @@ pub enum AncCommand {
     On,
     /// Enable transparency mode
     Transparency {
-        /// Transparency level (1–5); omit to keep current level
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
-        level: Option<u8>,
+        /// Transparency level (1–5)
+        #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(1..=5))]
+        level: u8,
     },
 }
 
@@ -79,6 +79,15 @@ pub enum MicCommand {
 pub enum Toggle {
     On,
     Off,
+}
+
+impl Toggle {
+    pub fn as_byte(&self) -> u8 {
+        match self {
+            Self::On => 0x01,
+            Self::Off => 0x00,
+        }
+    }
 }
 
 // ── sidetone ──────────────────────────────────────────────────────────────────
@@ -150,6 +159,20 @@ pub enum AutoOffInterval {
     Min45,
     #[value(name = "60")]
     Min60,
+}
+
+impl AutoOffInterval {
+    /// Interval code as sent in the SET frame. `Off` reports 0x02 because the
+    /// captured disable frame carries the 30-minute default alongside the
+    /// disable flag rather than zeroing the interval.
+    pub fn code(&self) -> u8 {
+        match self {
+            Self::Off | Self::Min30 => 0x02,
+            Self::Min15 => 0x01,
+            Self::Min45 => 0x03,
+            Self::Min60 => 0x04,
+        }
+    }
 }
 
 #[derive(Subcommand)]

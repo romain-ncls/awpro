@@ -1,94 +1,91 @@
-use hidapi::HidApi;
+use hidapi::HidDevice;
 use serde_json::json;
 
 use crate::cli::{GetArgs, GetCommand, MicField, PowerField};
 use crate::device;
 use crate::error::AppError;
 use crate::output;
+use crate::protocol::{self, Anc, op};
 
-pub fn run(args: GetArgs, json: bool) -> Result<(), AppError> {
-    let api = HidApi::new().map_err(|_| AppError::DeviceNotFound)?;
-    let device = device::open(&api)?;
-
+pub fn run(device_handle: &HidDevice, args: GetArgs, json: bool) -> Result<(), AppError> {
     match args.command {
-        GetCommand::Anc => get_anc(&device, json),
+        GetCommand::Anc => get_anc(device_handle, json),
         GetCommand::Mic { field } => match field {
-            None => get_mic_mute(&device, json),
-            Some(MicField::NoiseCancel) => get_mic_nc(&device, json),
+            None => get_mic_mute(device_handle, json),
+            Some(MicField::NoiseCancel) => get_mic_nc(device_handle, json),
         },
-        GetCommand::Sidetone => get_sidetone(&device, json),
+        GetCommand::Sidetone => get_sidetone(device_handle, json),
         GetCommand::Power { field } => match field {
-            PowerField::Saving => get_power_saving(&device, json),
-            PowerField::AutoOff => get_power_auto_off(&device, json),
+            PowerField::Saving => get_power_saving(device_handle, json),
+            PowerField::AutoOff => get_power_auto_off(device_handle, json),
         },
-        GetCommand::Battery => {
-            let buf = device::query(&device, 0x0A)?;
-            let level = buf[6] as u32;
-            output::print(&format!("{level}%"), json!({ "level": level }), json);
-            Ok(())
-        }
+        // Same query and same decoder as `awpro battery`; delegating keeps the
+        // two from drifting apart.
+        GetCommand::Battery => super::battery::run(device_handle, json),
     }
 }
 
 // ── ANC ───────────────────────────────────────────────────────────────────────
 
-fn get_anc(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
-    let buf = device::query(device, 0x77)?;
-    // Response: 07 C0 77 02 00 <mode> <level>
-    let mode = buf[5];
-    let level = buf[6];
+fn get_anc(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
+    let reply = device::query(device_handle, op::ANC_GET)?;
 
-    match mode {
-        0x00 => output::print("off", json!({ "mode": "off" }), json),
-        0x01 => output::print("on", json!({ "mode": "on" }), json),
-        0x02 => {
-            let plain = format!("transparency (level {level})");
-            output::print(
-                &plain,
-                json!({ "mode": "transparency", "level": level }),
-                json,
-            );
-        }
-        other => {
-            let plain = format!("unknown (0x{other:02x})");
-            output::print(
-                &plain,
-                json!({ "mode": format!("unknown (0x{other:02x})") }),
-                json,
-            );
-        }
+    match protocol::parse_anc(&reply) {
+        Anc::Off => output::print("off", json!({ "mode": "off" }), json),
+        Anc::On => output::print("on", json!({ "mode": "on" }), json),
+        Anc::Transparency(level) => output::print(
+            &format!("transparency (level {level})"),
+            json!({ "mode": "transparency", "level": level }),
+            json,
+        ),
+        // `mode` stays a fixed token so a consumer can match on it; the raw
+        // byte goes in its own field rather than inside the token.
+        Anc::Unknown(code) => output::print(
+            &format!("unknown (0x{code:02x})"),
+            json!({ "mode": "unknown", "raw": code }),
+            json,
+        ),
     }
     Ok(())
 }
 
 // ── Mic mute ──────────────────────────────────────────────────────────────────
 
-fn get_mic_mute(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
-    let buf = device::query(device, 0x76)?;
-    // Response: 07 C0 76 01 00 <muted>
-    let muted = buf[5] == 0;
-    let plain = if muted { "muted" } else { "unmuted" };
-    output::print(plain, json!({ "muted": muted }), json);
+fn get_mic_mute(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
+    let reply = device::query(device_handle, op::MIC_MUTE_GET)?;
+    let muted = protocol::parse_mic_muted(&reply);
+
+    output::print(
+        if muted { "muted" } else { "unmuted" },
+        json!({ "muted": muted }),
+        json,
+    );
     Ok(())
 }
 
 // ── Mic noise cancel ──────────────────────────────────────────────────────────
 
-fn get_mic_nc(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
-    let buf = device::query(device, 0x80)?;
-    // Response: 07 C0 80 01 00 <enabled>
-    let enabled = buf[5] != 0;
-    let plain = if enabled { "on" } else { "off" };
-    output::print(plain, json!({ "noise_cancel": enabled }), json);
+fn get_mic_nc(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
+    let reply = device::query(device_handle, op::MIC_NOISE_CANCEL)?;
+    let enabled = protocol::parse_mic_noise_cancel(&reply);
+
+    output::print(
+        if enabled { "on" } else { "off" },
+        json!({ "noise_cancel": enabled }),
+        json,
+    );
     Ok(())
 }
 
 // ── Sidetone ──────────────────────────────────────────────────────────────────
 
-fn get_sidetone(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
-    let buf = device::query(device, 0x80)?;
-    // Response: 07 C0 80 ... <sidetone_level at byte 8>
-    let level = buf[8];
+fn get_sidetone(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
+    // UNVERIFIED: queries the mic noise-cancel opcode and reads a byte outside
+    // that reply's declared payload. See `protocol::parse_sidetone` for what is
+    // and is not known about this.
+    let reply = device::query(device_handle, op::MIC_NOISE_CANCEL)?;
+    let level = protocol::parse_sidetone(&reply);
+
     let plain = match level {
         0 => "off".to_string(),
         n => n.to_string(),
@@ -99,16 +96,14 @@ fn get_sidetone(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> 
 
 // ── Power saving ──────────────────────────────────────────────────────────────
 
-fn get_power_saving(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
-    let buf = device::query(device, 0x15)?;
-    // Response: 07 C0 15 02 00 <enabled> <threshold>
-    let enabled = buf[5] != 0;
-    let threshold = buf[6] as u32;
+fn get_power_saving(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
+    let reply = device::query(device_handle, op::POWER_SAVING)?;
+    let saving = protocol::parse_power_saving(&reply);
 
-    if enabled {
+    if saving.enabled {
         output::print(
-            &format!("on (threshold: {threshold}%)"),
-            json!({ "enabled": true, "threshold": threshold }),
+            &format!("on (threshold: {}%)", saving.threshold),
+            json!({ "enabled": true, "threshold": saving.threshold }),
             json,
         );
     } else {
@@ -119,24 +114,14 @@ fn get_power_saving(device: &hidapi::HidDevice, json: bool) -> Result<(), AppErr
 
 // ── Power auto-off ────────────────────────────────────────────────────────────
 
-fn get_power_auto_off(device: &hidapi::HidDevice, json: bool) -> Result<(), AppError> {
-    // GET command for auto-off is not confirmed — timeout treated as error
-    let buf = device::query(device, 0x8D)?;
-    // Expected: 07 C0 8D 02 00 <enabled> <interval_code>
-    let enabled = buf[5] != 0;
-    let interval_code = buf[6];
+fn get_power_auto_off(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
+    let reply = device::query(device_handle, op::AUTO_OFF)?;
+    let auto_off = protocol::parse_auto_off(&reply);
 
-    if enabled {
-        let minutes: u32 = match interval_code {
-            0x01 => 15,
-            0x02 => 30,
-            0x03 => 45,
-            0x04 => 60,
-            other => other as u32 * 15, // best-effort fallback
-        };
+    if auto_off.enabled {
         output::print(
-            &format!("{minutes}"),
-            json!({ "enabled": true, "minutes": minutes }),
+            &auto_off.minutes.to_string(),
+            json!({ "enabled": true, "minutes": auto_off.minutes }),
             json,
         );
     } else {
