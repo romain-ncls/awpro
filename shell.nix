@@ -19,10 +19,6 @@ pkgs.mkShell {
   ];
 
   buildInputs = with pkgs; [
-    openssl
-    pkg-config
-    libudev-zero
-
     rust-analyzer
     jetbrains.rust-rover
     fish

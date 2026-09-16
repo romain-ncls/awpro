@@ -10,5 +10,5 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "=4.5.23", features = ["derive"] }
-hidapi = "=2.6.5"
+hidapi = { version = "=2.6.7", default-features = false, features = ["linux-native-basic-udev"] }
 serde_json = "=1.0.133"
