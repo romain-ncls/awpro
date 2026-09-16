@@ -54,8 +54,8 @@ pub mod op {
     pub const ANC_GET: u8 = 0x77;
     /// Mic (uplink) noise cancellation. Same ID both ways.
     pub const MIC_NOISE_CANCEL: u8 = 0x80;
-    /// Sidetone level. Setter only — there is no confirmed getter, see
-    /// [`super::parse_sidetone`].
+    /// Sidetone level. Setter only — querying 0x8A times out, so the level is
+    /// read back out of the 0x80 reply instead, see [`super::parse_sidetone`].
     pub const SIDETONE_SET: u8 = 0x8A;
 }
 
@@ -99,8 +99,8 @@ pub fn reply_matches(reply: &Reply, func: u8) -> bool {
 //
 // These take the whole fixed-size buffer rather than a slice so that no index
 // below can ever be out of bounds, whatever the device sent. None of them
-// consults the declared payload length in byte 3 — see `parse_sidetone` for
-// why that byte cannot be trusted as a bound here.
+// consults the declared payload length in byte 3: nothing needs it, and no
+// decoder has been validated against it.
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Anc {
@@ -131,20 +131,24 @@ pub fn parse_mic_muted(reply: &Reply) -> bool {
     reply[5] == 0
 }
 
-/// `07 C0 80 01 00 <enabled>`
+/// `07 C0 80 04 00 <enabled> 00 00 <sidetone>` — the reply declares four
+/// payload bytes and carries the sidetone level in the last of them, which
+/// [`parse_sidetone`] reads.
 pub fn parse_mic_noise_cancel(reply: &Reply) -> bool {
     reply[5] != 0
 }
 
 /// Sidetone level, read out of the *mic noise-cancel* reply (0x80).
 ///
-/// UNVERIFIED. There is no confirmed sidetone getter: the setter uses 0x8A,
-/// which has no working query, so byte 8 of the 0x80 reply was found
-/// empirically (commit c9d5037) and may well be padding. Note that the 0x80
-/// reply declares a payload length of 1 in byte 3, so byte 8 sits *outside*
-/// its own declared payload — do not "fix" this by bounding reads on the
-/// length byte, and do not swap in 0x1b from the decompiled SDK, which times
-/// out on this hardware.
+/// There is still no sidetone getter — querying 0x8A times out — but byte 8 of
+/// the 0x80 reply is confirmed to hold the level: over the cable, `sidetone 4`
+/// reads back as 4 and `sidetone off` as 0, and the reply declares a payload
+/// length of 4 in byte 3 (`07 C0 80 04 00 01 00 00 00`), which puts byte 8 at
+/// the end of its own declared payload rather than outside it.
+///
+/// Earlier comments here called this unverified and claimed a declared length
+/// of 1; both were wrong. Do not swap in 0x1b from the decompiled SDK, which
+/// does still time out on this hardware.
 pub fn parse_sidetone(reply: &Reply) -> u8 {
     reply[8]
 }
@@ -289,6 +293,24 @@ mod tests {
         assert!(!parse_mic_noise_cancel(&reply(&[
             0x07, 0xC0, 0x80, 0x01, 0x00, 0x00
         ])));
+    }
+
+    #[test]
+    fn sidetone_reads_the_last_byte_of_the_noise_cancel_payload() {
+        // Bytes as captured over the cable with noise-cancel on: the reply
+        // declares four payload bytes and the sidetone level is the fourth.
+        assert_eq!(
+            parse_sidetone(&reply(&[
+                0x07, 0xC0, 0x80, 0x04, 0x00, 0x01, 0x00, 0x00, 0x04
+            ])),
+            4
+        );
+        assert_eq!(
+            parse_sidetone(&reply(&[
+                0x07, 0xC0, 0x80, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00
+            ])),
+            0
+        );
     }
 
     #[test]

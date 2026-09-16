@@ -7,32 +7,98 @@ use crate::error::AppError;
 use crate::protocol::{self, REPLY_LEN, REPORT_ID_IN, REPORT_LEN, Reply};
 
 pub const VENDOR_ID: u16 = 0x413c;
-pub const PRODUCT_ID: u16 = 0xa529;
 
 const POLL_RETRIES: usize = 20;
 const POLL_DELAY_MS: u64 = 20;
 
-/// Open the dongle, distinguishing "not plugged in" from "plugged in but we
-/// are not allowed to touch it".
+/// How the headset is reached.
+///
+/// Both expose the same vendor interface: the report descriptors of the two
+/// products are byte-identical (usage page 0xFF13, feature report 0x06, input
+/// report 0x07) and every opcode in [`crate::protocol::op`] answers the same
+/// way over either. Only the product ID differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// The headset itself, plugged in over USB-C.
+    Wired,
+    /// The 2.4 GHz dongle, with the headset on the other end of the link.
+    Dongle,
+}
+
+impl Transport {
+    pub const fn product_id(self) -> u16 {
+        match self {
+            Self::Wired => 0xa528,
+            Self::Dongle => 0xa529,
+        }
+    }
+
+    /// Lowercase name, spelled exactly like the CLI flag that forces it.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Wired => "wired",
+            Self::Dongle => "dongle",
+        }
+    }
+}
+
+/// Which transport the user asked for, if any.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Preference {
+    #[default]
+    Auto,
+    Wired,
+    Dongle,
+}
+
+/// The transports to try, in order.
+///
+/// Auto puts the cable first. The dongle cannot be chosen on presence alone:
+/// with the headset on USB-C the dongle still enumerates and still opens, but
+/// the radio link is down, so every query against it times out. Trying wired
+/// first means the cable takes over exactly as it does for audio.
+pub fn candidates(pref: Preference) -> &'static [Transport] {
+    match pref {
+        Preference::Auto => &[Transport::Wired, Transport::Dongle],
+        Preference::Wired => &[Transport::Wired],
+        Preference::Dongle => &[Transport::Dongle],
+    }
+}
+
+/// Open the first candidate transport that is connected, distinguishing "not
+/// plugged in" from "plugged in but we are not allowed to touch it".
 ///
 /// Enumeration succeeds without read/write access to the hidraw node, so a
 /// device that is listed and still refuses to open is a permissions problem —
 /// reporting that as "device not found" sends people hunting a hardware fault
 /// when they are missing a udev rule.
-pub fn open(api: &HidApi) -> Result<HidDevice, AppError> {
-    match api.open(VENDOR_ID, PRODUCT_ID) {
-        Ok(device) => Ok(device),
-        Err(e) => {
-            let present = api
-                .device_list()
-                .any(|d| d.vendor_id() == VENDOR_ID && d.product_id() == PRODUCT_ID);
-            if present {
-                Err(AppError::Open(e.to_string()))
-            } else {
-                Err(AppError::DeviceNotFound)
+///
+/// A candidate that is present but unopenable ends the search rather than
+/// falling through to the next one. Falling through would trade an actionable
+/// "install the udev rule" for a confusing timeout: the next candidate is the
+/// dongle, and a dongle whose headset is on the cable opens happily and then
+/// answers nothing.
+pub fn open(api: &HidApi, pref: Preference) -> Result<HidDevice, AppError> {
+    let tried = candidates(pref);
+
+    for &transport in tried {
+        match api.open(VENDOR_ID, transport.product_id()) {
+            Ok(device) => return Ok(device),
+            Err(e) => {
+                let present = api.device_list().any(|d| {
+                    d.vendor_id() == VENDOR_ID && d.product_id() == transport.product_id()
+                });
+                if present {
+                    return Err(AppError::Open {
+                        transport,
+                        msg: e.to_string(),
+                    });
+                }
             }
         }
     }
+
+    Err(AppError::DeviceNotFound { tried })
 }
 
 /// Send a SET frame and wait briefly for the device's acknowledgement.
@@ -79,9 +145,11 @@ fn drain(device: &HidDevice) -> bool {
 /// Returns the full reply buffer (index 0 = report ID 0x07) on success.
 ///
 /// The declared payload length in byte 3 is deliberately not used to bound the
-/// reply: no decoder has ever been validated against it, and at least one
-/// (`protocol::parse_sidetone`) reads outside it on purpose. Adding a bound
-/// here would turn working queries into timeouts with no way to retest them.
+/// reply: no decoder has ever been validated against it. (An earlier comment
+/// here justified that by saying `protocol::parse_sidetone` reads outside the
+/// declared length — it does not; the 0x80 reply declares 4 and that decoder
+/// reads byte 8, the last byte inside it.) Adding a bound would turn working
+/// queries into timeouts with no way to retest them, for no benefit.
 pub fn query(device: &HidDevice, func: u8) -> Result<Reply, AppError> {
     let req = protocol::get_frame(func);
     device
@@ -117,4 +185,40 @@ pub fn query(device: &HidDevice, func: u8) -> Result<Reply, AppError> {
         }
     }
     Err(AppError::Timeout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_prefers_the_cable_over_the_dongle() {
+        // With the headset plugged in over USB-C the dongle still enumerates
+        // and still opens, but the 2.4 GHz link is down and every query times
+        // out — so presence alone cannot pick it. Wired has to come first.
+        assert_eq!(
+            candidates(Preference::Auto),
+            [Transport::Wired, Transport::Dongle]
+        );
+    }
+
+    #[test]
+    fn an_explicit_preference_never_falls_back() {
+        assert_eq!(candidates(Preference::Wired), [Transport::Wired]);
+        assert_eq!(candidates(Preference::Dongle), [Transport::Dongle]);
+    }
+
+    #[test]
+    fn transports_carry_the_product_ids_seen_on_the_bus() {
+        assert_eq!(Transport::Dongle.product_id(), 0xa529);
+        assert_eq!(Transport::Wired.product_id(), 0xa528);
+    }
+
+    #[test]
+    fn transport_names_are_the_flag_spellings() {
+        // These strings appear in error messages next to `--wired` / `--dongle`
+        // advice, so they must match the flags the CLI accepts.
+        assert_eq!(Transport::Wired.name(), "wired");
+        assert_eq!(Transport::Dongle.name(), "dongle");
+    }
 }

@@ -21,10 +21,11 @@ fn main() {
 
 fn run(cli: Cli) -> Result<(), AppError> {
     let json = cli.json;
+    let preference = cli.preference();
     // One HidApi and one open per invocation: HidApi::new() enumerates every
     // HID device on the system, and every subcommand wants the same handle.
     let api = HidApi::new().map_err(|e| AppError::Init(e.to_string()))?;
-    let device = device::open(&api)?;
+    let device = device::open(&api, preference)?;
 
     match cli.command {
         Command::Anc(cmd) => commands::anc::run(&device, cmd, json),

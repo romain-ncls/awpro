@@ -33,8 +33,10 @@
             destination = "/lib/udev/rules.d/70-awpro.rules";
             text = ''
               ACTION!="add|change", GOTO="awpro_end"
-              # Dell AW Pro headset (413c:a529)
+              # Dell AW Pro wireless dongle (413c:a529)
               SUBSYSTEM=="hidraw", ATTRS{idVendor}=="413c", ATTRS{idProduct}=="a529", TAG+="uaccess"
+              # Dell AW Pro headset over its USB-C cable (413c:a528)
+              SUBSYSTEM=="hidraw", ATTRS{idVendor}=="413c", ATTRS{idProduct}=="a528", TAG+="uaccess"
               LABEL="awpro_end"
             '';
           };
