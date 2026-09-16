@@ -1,7 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::device::Preference;
-
 #[derive(Parser)]
 #[command(
     name = "awpro",
@@ -12,28 +10,8 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
-    /// Talk to the headset over its USB-C cable (413c:a528)
-    #[arg(long, global = true, conflicts_with = "dongle")]
-    pub wired: bool,
-
-    /// Talk to the headset through the wireless dongle (413c:a529)
-    #[arg(long, global = true)]
-    pub dongle: bool,
-
     #[command(subcommand)]
     pub command: Command,
-}
-
-impl Cli {
-    /// Which transport the flags ask for. Clap rejects passing both, so the
-    /// two booleans cannot be true at once.
-    pub fn preference(&self) -> Preference {
-        match (self.wired, self.dongle) {
-            (true, _) => Preference::Wired,
-            (_, true) => Preference::Dongle,
-            _ => Preference::Auto,
-        }
-    }
 }
 
 // ── Top-level commands ────────────────────────────────────────────────────────

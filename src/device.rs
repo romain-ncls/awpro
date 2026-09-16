@@ -42,28 +42,18 @@ impl Transport {
     }
 }
 
-/// Which transport the user asked for, if any.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Preference {
-    #[default]
-    Auto,
-    Wired,
-    Dongle,
-}
-
 /// The transports to try, in order.
 ///
-/// Auto puts the cable first. The dongle cannot be chosen on presence alone:
-/// with the headset on USB-C the dongle still enumerates and still opens, but
-/// the radio link is down, so every query against it times out. Trying wired
-/// first means the cable takes over exactly as it does for audio.
-pub fn candidates(pref: Preference) -> &'static [Transport] {
-    match pref {
-        Preference::Auto => &[Transport::Wired, Transport::Dongle],
-        Preference::Wired => &[Transport::Wired],
-        Preference::Dongle => &[Transport::Dongle],
-    }
-}
+/// The cable comes first because the two are mutually exclusive in practice:
+/// plugging the headset into USB-C drops the 2.4 GHz link, and the dongle —
+/// which goes on enumerating and goes on opening — then answers nothing.
+/// Preferring the dongle whenever it is present would report "device did not
+/// respond" with a working wired headset attached.
+///
+/// That exclusivity is also why there is no flag to force one: the cable being
+/// present *is* the answer, and forcing the dongle could only ever select a
+/// device that cannot reply.
+pub const ORDER: [Transport; 2] = [Transport::Wired, Transport::Dongle];
 
 /// Open the first candidate transport that is connected, distinguishing "not
 /// plugged in" from "plugged in but we are not allowed to touch it".
@@ -78,10 +68,8 @@ pub fn candidates(pref: Preference) -> &'static [Transport] {
 /// "install the udev rule" for a confusing timeout: the next candidate is the
 /// dongle, and a dongle whose headset is on the cable opens happily and then
 /// answers nothing.
-pub fn open(api: &HidApi, pref: Preference) -> Result<HidDevice, AppError> {
-    let tried = candidates(pref);
-
-    for &transport in tried {
+pub fn open(api: &HidApi) -> Result<HidDevice, AppError> {
+    for transport in ORDER {
         match api.open(VENDOR_ID, transport.product_id()) {
             Ok(device) => return Ok(device),
             Err(e) => {
@@ -98,7 +86,7 @@ pub fn open(api: &HidApi, pref: Preference) -> Result<HidDevice, AppError> {
         }
     }
 
-    Err(AppError::DeviceNotFound { tried })
+    Err(AppError::DeviceNotFound)
 }
 
 /// Send a SET frame and wait briefly for the device's acknowledgement.
@@ -192,20 +180,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_prefers_the_cable_over_the_dongle() {
+    fn the_cable_is_tried_before_the_dongle() {
         // With the headset plugged in over USB-C the dongle still enumerates
         // and still opens, but the 2.4 GHz link is down and every query times
         // out — so presence alone cannot pick it. Wired has to come first.
-        assert_eq!(
-            candidates(Preference::Auto),
-            [Transport::Wired, Transport::Dongle]
-        );
-    }
-
-    #[test]
-    fn an_explicit_preference_never_falls_back() {
-        assert_eq!(candidates(Preference::Wired), [Transport::Wired]);
-        assert_eq!(candidates(Preference::Dongle), [Transport::Dongle]);
+        assert_eq!(ORDER, [Transport::Wired, Transport::Dongle]);
     }
 
     #[test]

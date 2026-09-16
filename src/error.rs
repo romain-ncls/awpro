@@ -1,11 +1,11 @@
 use std::fmt;
 
-use crate::device::{Transport, VENDOR_ID};
+use crate::device::{ORDER, Transport, VENDOR_ID};
 
 #[derive(Debug)]
 pub enum AppError {
-    /// None of the transports we were willing to use is plugged in.
-    DeviceNotFound { tried: &'static [Transport] },
+    /// Neither transport is plugged in.
+    DeviceNotFound,
     /// A transport is present but would not open — almost always a missing
     /// udev rule rather than a hardware fault.
     Open { transport: Transport, msg: String },
@@ -24,7 +24,7 @@ impl AppError {
     /// message, these strings are part of the output contract.
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::DeviceNotFound { .. } => "device-not-found",
+            Self::DeviceNotFound => "device-not-found",
             Self::Open { .. } => "open-failed",
             Self::Init(_) => "init-failed",
             Self::HidWrite(_) => "write-failed",
@@ -37,7 +37,7 @@ impl AppError {
     /// "headset asleep" from "no permission" without parsing the message.
     pub fn exit_code(&self) -> i32 {
         match self {
-            Self::DeviceNotFound { .. } => 2,
+            Self::DeviceNotFound => 2,
             Self::Open { .. } => 3,
             Self::Timeout => 4,
             Self::Init(_) | Self::HidWrite(_) | Self::HidRead(_) => 1,
@@ -48,8 +48,8 @@ impl AppError {
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DeviceNotFound { tried } => {
-                let looked_for = tried
+            Self::DeviceNotFound => {
+                let looked_for = ORDER
                     .iter()
                     .map(|t| format!("{VENDOR_ID:04x}:{:04x} {}", t.product_id(), t.name()))
                     .collect::<Vec<_>>()
