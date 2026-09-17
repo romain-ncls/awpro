@@ -33,5 +33,6 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::Power(cmd) => commands::power::run(&device, cmd, json),
         Command::Battery => commands::battery::run(&device, json),
         Command::Get(cmd) => commands::get::run(&device, cmd, json),
+        Command::Status => commands::status::run(&device, json),
     }
 }

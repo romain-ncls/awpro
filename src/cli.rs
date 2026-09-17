@@ -30,6 +30,8 @@ pub enum Command {
     Battery,
     /// Query current device state
     Get(GetArgs),
+    /// Query every readable setting at once
+    Status,
 }
 
 // ── anc ───────────────────────────────────────────────────────────────────────

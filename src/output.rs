@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::error::AppError;
+use crate::protocol::Anc;
 
 /// Print either a plain string or a JSON object depending on the `json` flag.
 pub fn print(plain: &str, json_value: Value, json: bool) {
@@ -45,5 +46,34 @@ pub fn report_error(err: &AppError, json: bool) {
             "{}",
             json!({ "error": { "kind": err.kind(), "message": err.to_string() } })
         );
+    }
+}
+
+// ── Field rendering ───────────────────────────────────────────────────────────
+//
+// ANC is the one field with enough shape to be worth rendering in one place:
+// `get anc` and `status` both have to spell out four variants, and a fifth
+// spelling of any of them would be a silent inconsistency.
+
+/// ANC state as a human-readable phrase.
+pub fn anc_plain(anc: &Anc) -> String {
+    match anc {
+        Anc::Off => "off".to_string(),
+        Anc::On => "on".to_string(),
+        Anc::Transparency(level) => format!("transparency (level {level})"),
+        Anc::Unknown(code) => format!("unknown (0x{code:02x})"),
+    }
+}
+
+/// ANC state as its `--json` object.
+///
+/// `mode` stays a fixed token so a consumer can match on it; an unrecognised
+/// byte goes in its own `raw` field rather than inside the token.
+pub fn anc_json(anc: &Anc) -> Value {
+    match anc {
+        Anc::Off => json!({ "mode": "off" }),
+        Anc::On => json!({ "mode": "on" }),
+        Anc::Transparency(level) => json!({ "mode": "transparency", "level": level }),
+        Anc::Unknown(code) => json!({ "mode": "unknown", "raw": code }),
     }
 }

@@ -5,7 +5,7 @@ use crate::cli::{GetArgs, GetCommand, MicField, PowerField};
 use crate::device;
 use crate::error::AppError;
 use crate::output;
-use crate::protocol::{self, Anc, op};
+use crate::protocol::{self, op};
 
 pub fn run(device_handle: &HidDevice, args: GetArgs, json: bool) -> Result<(), AppError> {
     match args.command {
@@ -29,23 +29,9 @@ pub fn run(device_handle: &HidDevice, args: GetArgs, json: bool) -> Result<(), A
 
 fn get_anc(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
     let reply = device::query(device_handle, op::ANC_GET)?;
+    let anc = protocol::parse_anc(&reply);
 
-    match protocol::parse_anc(&reply) {
-        Anc::Off => output::print("off", json!({ "mode": "off" }), json),
-        Anc::On => output::print("on", json!({ "mode": "on" }), json),
-        Anc::Transparency(level) => output::print(
-            &format!("transparency (level {level})"),
-            json!({ "mode": "transparency", "level": level }),
-            json,
-        ),
-        // `mode` stays a fixed token so a consumer can match on it; the raw
-        // byte goes in its own field rather than inside the token.
-        Anc::Unknown(code) => output::print(
-            &format!("unknown (0x{code:02x})"),
-            json!({ "mode": "unknown", "raw": code }),
-            json,
-        ),
-    }
+    output::print(&output::anc_plain(&anc), output::anc_json(&anc), json);
     Ok(())
 }
 
