@@ -4,7 +4,7 @@ use std::time::Duration;
 use hidapi::{HidApi, HidDevice};
 
 use crate::error::AppError;
-use crate::protocol::{self, REPLY_LEN, REPORT_ID_IN, REPORT_LEN, Reply};
+use crate::protocol::{self, REPLY_LEN, REPORT_ID_IN, REPORT_LEN, Reply, WirelessLink, op};
 
 pub const VENDOR_ID: u16 = 0x413c;
 
@@ -68,10 +68,10 @@ pub const ORDER: [Transport; 2] = [Transport::Wired, Transport::Dongle];
 /// "install the udev rule" for a confusing timeout: the next candidate is the
 /// dongle, and a dongle whose headset is on the cable opens happily and then
 /// answers nothing.
-pub fn open(api: &HidApi) -> Result<HidDevice, AppError> {
+pub fn open(api: &HidApi) -> Result<(HidDevice, Transport), AppError> {
     for transport in ORDER {
         match api.open(VENDOR_ID, transport.product_id()) {
-            Ok(device) => return Ok(device),
+            Ok(device) => return Ok((device, transport)),
             Err(e) => {
                 let present = api.device_list().any(|d| {
                     d.vendor_id() == VENDOR_ID && d.product_id() == transport.product_id()
@@ -183,6 +183,35 @@ fn query_frame(device: &HidDevice, req: [u8; REPORT_LEN], func: u8) -> Result<Re
     Err(AppError::Timeout)
 }
 
+/// Turn a bare timeout into the specific diagnosis, when there is one.
+///
+/// Only the dongle can be explained this way. Over the cable the link reads
+/// `Down` as a matter of course — the headset is on USB-C, not the radio — so
+/// blaming a wired timeout on the link would be wrong every time. A link that
+/// is up, or a link query that itself failed, leaves the timeout as it was:
+/// nothing more is known, so nothing more is claimed.
+fn explain_timeout(transport: Transport, link: Option<WirelessLink>) -> AppError {
+    match (transport, link) {
+        (Transport::Dongle, Some(WirelessLink::Down)) => AppError::HeadsetNotConnected,
+        _ => AppError::Timeout,
+    }
+}
+
+/// Re-describe `error` if it is a timeout the link state accounts for.
+///
+/// Runs only on the failure path, and asks the one opcode the dongle answers
+/// on its own: with the headset off, 0x09 still replies while every other
+/// query, identity included, returns nothing.
+pub fn diagnose(device: &HidDevice, transport: Transport, error: AppError) -> AppError {
+    if !matches!(error, AppError::Timeout) {
+        return error;
+    }
+    let link = query(device, op::WIRELESS_LINK)
+        .ok()
+        .map(|reply| protocol::parse_wireless_link(&reply));
+    explain_timeout(transport, link)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +228,41 @@ mod tests {
     fn transports_carry_the_product_ids_seen_on_the_bus() {
         assert_eq!(Transport::Dongle.product_id(), 0xa529);
         assert_eq!(Transport::Wired.product_id(), 0xa528);
+    }
+
+    #[test]
+    fn a_dongle_timeout_with_the_link_down_names_the_real_problem() {
+        // The common case: dongle in the port, headset off or out of range.
+        // "device did not respond" sends people hunting a driver fault.
+        assert!(matches!(
+            explain_timeout(Transport::Dongle, Some(WirelessLink::Down)),
+            AppError::HeadsetNotConnected
+        ));
+    }
+
+    #[test]
+    fn a_wired_timeout_is_never_blamed_on_the_link() {
+        // Over the cable the link reads Down as a matter of course — the
+        // headset is on USB-C, not the radio. Reporting that as "headset not
+        // connected" would be wrong every single time.
+        assert!(matches!(
+            explain_timeout(Transport::Wired, Some(WirelessLink::Down)),
+            AppError::Timeout
+        ));
+    }
+
+    #[test]
+    fn a_timeout_stays_a_timeout_when_the_link_does_not_explain_it() {
+        // Link up, or the link query itself failed: nothing more is known
+        // than before, so nothing more is claimed.
+        assert!(matches!(
+            explain_timeout(Transport::Dongle, Some(WirelessLink::Up)),
+            AppError::Timeout
+        ));
+        assert!(matches!(
+            explain_timeout(Transport::Dongle, None),
+            AppError::Timeout
+        ));
     }
 
     #[test]

@@ -24,9 +24,9 @@ fn run(cli: Cli) -> Result<(), AppError> {
     // One HidApi and one open per invocation: HidApi::new() enumerates every
     // HID device on the system, and every subcommand wants the same handle.
     let api = HidApi::new().map_err(|e| AppError::Init(e.to_string()))?;
-    let device = device::open(&api)?;
+    let (device, transport) = device::open(&api)?;
 
-    match cli.command {
+    let result = match cli.command {
         Command::Anc(cmd) => commands::anc::run(&device, cmd, json),
         Command::Mic(cmd) => commands::mic::run(&device, cmd, json),
         Command::Sidetone(cmd) => commands::sidetone::run(&device, cmd, json),
@@ -36,5 +36,10 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::Status => commands::status::run(&device, json),
         Command::Info => commands::info::run(&device, json),
         Command::Watch => commands::watch::run(&device, json),
-    }
+    };
+
+    // A timeout on the dongle usually means the headset is simply not on the
+    // link. Saying so beats "device did not respond", which reads like a
+    // driver fault.
+    result.map_err(|e| device::diagnose(&device, transport, e))
 }
