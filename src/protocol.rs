@@ -57,6 +57,13 @@ pub mod op {
     /// Sidetone level. Setter only — querying 0x8A times out, so the level is
     /// read back out of the 0x80 reply instead, see [`super::parse_sidetone`].
     pub const SIDETONE_SET: u8 = 0x8A;
+    /// State of the 2.4 GHz link to the headset. Query only.
+    ///
+    /// Not a setting: it reports whether the headset is on the dongle's radio
+    /// link. A full sweep of all 256 opcodes found this one answering, and
+    /// watching it across cable plug/unplug cycles showed it tracking the link
+    /// exactly.
+    pub const WIRELESS_LINK: u8 = 0x09;
 }
 
 /// Build a SET frame, zero-padded to a full report.
@@ -123,6 +130,39 @@ pub fn parse_anc(reply: &Reply) -> Anc {
 /// `07 C0 0A 0A 00 00 <level>` — byte 5 is a constant 0x00, the level is at 6.
 pub fn parse_battery(reply: &Reply) -> u8 {
     reply[6]
+}
+
+/// State of the 2.4 GHz link between dongle and headset.
+#[derive(Debug, PartialEq, Eq)]
+pub enum WirelessLink {
+    /// The headset is on the dongle's radio link.
+    Up,
+    /// It is not — because it is on the cable, or off.
+    Down,
+    Unknown(u8),
+}
+
+/// `07 C0 09 01 00 <state>`
+///
+/// The two values are `0xCC` and `0xDD`, and nothing else was ever observed
+/// across four cable plug/unplug transitions watched on both hidraw nodes.
+/// This is the pollable form of notification field 0x01, which carries the
+/// same byte.
+pub fn parse_wireless_link(reply: &Reply) -> WirelessLink {
+    match reply[5] {
+        0xCC => WirelessLink::Up,
+        0xDD => WirelessLink::Down,
+        other => WirelessLink::Unknown(other),
+    }
+}
+
+/// Whether the headset is charging, out of the same 0x0A reply as the level.
+///
+/// Byte 7 is 1 while the cable is supplying power and 0 on battery. Confirmed
+/// both ways on this hardware: every 0x0A reply captured from AWCC over the
+/// dongle has 0 there, and reading the same opcode over USB-C gives 1.
+pub fn parse_charging(reply: &Reply) -> bool {
+    reply[7] != 0
 }
 
 /// `07 C0 76 01 00 <unmuted>` — 0 means muted, which matches the setter in
@@ -272,6 +312,45 @@ mod tests {
             parse_battery(&reply(&[0x07, 0xC0, 0x0A, 0x0A, 0x00, 0x00, 77])),
             77
         );
+    }
+
+    #[test]
+    fn wireless_link_decodes_the_two_values_the_headset_actually_sends() {
+        // 0xCC and 0xDD are the only values seen across four cable
+        // plug/unplug transitions, watching both hidraw nodes at once.
+        assert_eq!(
+            parse_wireless_link(&reply(&[0x07, 0xC0, 0x09, 0x01, 0x00, 0xCC])),
+            WirelessLink::Up
+        );
+        assert_eq!(
+            parse_wireless_link(&reply(&[0x07, 0xC0, 0x09, 0x01, 0x00, 0xDD])),
+            WirelessLink::Down
+        );
+        assert_eq!(
+            parse_wireless_link(&reply(&[0x07, 0xC0, 0x09, 0x01, 0x00, 0x42])),
+            WirelessLink::Unknown(0x42)
+        );
+    }
+
+    #[test]
+    fn charging_is_read_from_the_battery_reply() {
+        // Both byte strings are whole 0x0A payloads seen on this hardware: the
+        // first captured from AWCC with the headset on battery, the second read
+        // over the cable while charging. They differ in byte 7 and nowhere that
+        // matters.
+        let on_battery = reply(&[
+            0x07, 0xC0, 0x0A, 0x0A, 0x00, 0x00, 0x40, 0x00, 0x00, 0x04, 0x0F, 0x40, 0x00, 0x02,
+            0x03,
+        ]);
+        let charging = reply(&[
+            0x07, 0xC0, 0x0A, 0x0A, 0x00, 0x00, 0x64, 0x01, 0x00, 0x36, 0x10, 0x64, 0x00, 0x02,
+            0x2F,
+        ]);
+        assert!(!parse_charging(&on_battery));
+        assert!(parse_charging(&charging));
+        // The level must keep reading the same way out of both.
+        assert_eq!(parse_battery(&on_battery), 64);
+        assert_eq!(parse_battery(&charging), 100);
     }
 
     #[test]

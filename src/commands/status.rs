@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::device;
 use crate::error::AppError;
 use crate::output;
-use crate::protocol::{self, Anc, AutoOff, PowerSaving, Reply, op};
+use crate::protocol::{self, Anc, AutoOff, PowerSaving, Reply, WirelessLink, op};
 
 /// Width of the label column in plain output: the longest label plus a gap.
 const LABEL_WIDTH: usize = 18;
@@ -27,17 +27,19 @@ pub fn run(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
 ///
 /// Every field is optional because every field is separately fallible: the
 /// opcode table is reverse-engineered, so one query falling silent must not
-/// take the other six down with it. `errors` names each field that could not
+/// take the others down with it. `errors` names each field that could not
 /// be read and the [`AppError::kind`] tag saying why.
 #[derive(Debug, Default)]
 struct Status {
     battery: Option<u8>,
+    charging: Option<bool>,
     anc: Option<Anc>,
     mic_muted: Option<bool>,
     noise_cancel: Option<bool>,
     sidetone: Option<u8>,
     power_saving: Option<PowerSaving>,
     auto_off: Option<AutoOff>,
+    wireless_link: Option<WirelessLink>,
     errors: Vec<(&'static str, &'static str)>,
 }
 
@@ -48,7 +50,11 @@ impl Status {
     /// so the table doubles as an index of what can be queried on its own.
     fn rows(&self) -> Vec<(&'static str, String)> {
         vec![
-            self.row("battery", "battery", self.battery.map(|l| format!("{l}%"))),
+            self.row(
+                "battery",
+                "battery",
+                self.battery.map(|l| battery_plain(l, self.charging)),
+            ),
             self.row("anc", "anc", self.anc.as_ref().map(output::anc_plain)),
             self.row(
                 "mic",
@@ -71,6 +77,11 @@ impl Status {
                 "power auto-off",
                 "power.auto_off",
                 self.auto_off.as_ref().map(auto_off_plain),
+            ),
+            self.row(
+                "wireless link",
+                "wireless_link",
+                self.wireless_link.as_ref().map(wireless_link_plain),
             ),
         ]
     }
@@ -113,7 +124,10 @@ impl Status {
     /// named under `errors` alongside its error kind.
     fn json(&self) -> Value {
         let mut value = json!({
-            "battery": self.battery.map(|level| json!({ "level": level })),
+            "battery": self.battery.map(|level| json!({
+                "level": level,
+                "charging": self.charging,
+            })),
             "anc": self.anc.as_ref().map(output::anc_json),
             "mic": {
                 "muted": self.mic_muted,
@@ -124,6 +138,7 @@ impl Status {
                 "saving": self.power_saving.as_ref().map(saving_json),
                 "auto_off": self.auto_off.as_ref().map(auto_off_json),
             },
+            "wireless_link": self.wireless_link.as_ref().map(wireless_link_json),
         });
 
         if !self.errors.is_empty() {
@@ -150,8 +165,11 @@ fn read(device_handle: &HidDevice) -> Result<Status, AppError> {
     let mut state = ReadState::default();
     let mut status = Status::default();
 
+    // One reply feeds two fields: byte 7 of the battery payload is the
+    // charging flag. See `protocol::parse_charging`.
     if let Some(reply) = state.query(&["battery"], || device::query(device_handle, op::BATTERY)) {
         status.battery = Some(protocol::parse_battery(&reply));
+        status.charging = Some(protocol::parse_charging(&reply));
     }
     if let Some(reply) = state.query(&["anc"], || device::query(device_handle, op::ANC_GET)) {
         status.anc = Some(protocol::parse_anc(&reply));
@@ -179,6 +197,11 @@ fn read(device_handle: &HidDevice) -> Result<Status, AppError> {
         device::query(device_handle, op::AUTO_OFF)
     }) {
         status.auto_off = Some(protocol::parse_auto_off(&reply));
+    }
+    if let Some(reply) = state.query(&["wireless_link"], || {
+        device::query(device_handle, op::WIRELESS_LINK)
+    }) {
+        status.wireless_link = Some(protocol::parse_wireless_link(&reply));
     }
 
     status.errors = std::mem::take(&mut state.errors);
@@ -238,6 +261,31 @@ fn on_off(enabled: bool) -> String {
     if enabled { "on" } else { "off" }.to_string()
 }
 
+/// Level, with the charging state appended only when it is both known and
+/// true: an unreadable flag must not be printed as "not charging".
+fn battery_plain(level: u8, charging: Option<bool>) -> String {
+    match charging {
+        Some(true) => format!("{level}% (charging)"),
+        _ => format!("{level}%"),
+    }
+}
+
+fn wireless_link_plain(link: &WirelessLink) -> String {
+    match link {
+        WirelessLink::Up => "up".to_string(),
+        WirelessLink::Down => "down".to_string(),
+        WirelessLink::Unknown(code) => format!("unknown (0x{code:02x})"),
+    }
+}
+
+fn wireless_link_json(link: &WirelessLink) -> Value {
+    match link {
+        WirelessLink::Up => json!({ "up": true }),
+        WirelessLink::Down => json!({ "up": false }),
+        WirelessLink::Unknown(code) => json!({ "up": null, "code": code }),
+    }
+}
+
 fn sidetone_plain(level: u8) -> String {
     match level {
         0 => "off".to_string(),
@@ -286,6 +334,8 @@ mod tests {
     fn full() -> Status {
         Status {
             battery: Some(87),
+            charging: Some(true),
+            wireless_link: Some(WirelessLink::Down),
             anc: Some(Anc::Transparency(3)),
             mic_muted: Some(false),
             noise_cancel: Some(true),
@@ -307,14 +357,50 @@ mod tests {
         assert_eq!(
             full().rows(),
             vec![
-                ("battery", "87%".to_string()),
+                ("battery", "87% (charging)".to_string()),
                 ("anc", "transparency (level 3)".to_string()),
                 ("mic", "unmuted".to_string()),
                 ("mic noise-cancel", "on".to_string()),
                 ("sidetone", "4".to_string()),
                 ("power saving", "on (threshold: 20%)".to_string()),
                 ("power auto-off", "30 minutes".to_string()),
+                ("wireless link", "down".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn battery_says_charging_only_while_it_is() {
+        let discharging = Status {
+            charging: Some(false),
+            ..full()
+        };
+        assert_eq!(discharging.rows()[0], ("battery", "87%".to_string()));
+
+        // An unreadable charging flag must not invent "not charging": the
+        // level is still worth printing on its own.
+        let unknown = Status {
+            charging: None,
+            ..full()
+        };
+        assert_eq!(unknown.rows()[0], ("battery", "87%".to_string()));
+    }
+
+    #[test]
+    fn wireless_link_row_distinguishes_up_from_down() {
+        let up = Status {
+            wireless_link: Some(WirelessLink::Up),
+            ..full()
+        };
+        assert_eq!(up.rows()[7], ("wireless link", "up".to_string()));
+
+        let odd = Status {
+            wireless_link: Some(WirelessLink::Unknown(0x42)),
+            ..full()
+        };
+        assert_eq!(
+            odd.rows()[7],
+            ("wireless link", "unknown (0x42)".to_string())
         );
     }
 
@@ -361,14 +447,15 @@ mod tests {
         assert_eq!(
             full().json(),
             json!({
-                "battery": { "level": 87 },
+                "battery": { "level": 87, "charging": true },
                 "anc": { "mode": "transparency", "level": 3 },
                 "mic": { "muted": false, "noise_cancel": true },
                 "sidetone": 4,
                 "power": {
                     "saving": { "enabled": true, "threshold": 20 },
                     "auto_off": { "enabled": true, "minutes": 30 }
-                }
+                },
+                "wireless_link": { "up": false }
             })
         );
     }
