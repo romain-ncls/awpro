@@ -20,6 +20,8 @@ pub enum AppError {
     /// The dongle answered, but the headset is not on its radio link — so
     /// there is nothing on the other end to answer a query.
     HeadsetNotConnected,
+    /// Writing to stdout failed for a reason other than the reader leaving.
+    Output(String),
 }
 
 impl AppError {
@@ -34,6 +36,7 @@ impl AppError {
             Self::HidRead(_) => "read-failed",
             Self::Timeout => "timeout",
             Self::HeadsetNotConnected => "headset-not-connected",
+            Self::Output(_) => "output-failed",
         }
     }
 
@@ -45,7 +48,7 @@ impl AppError {
             Self::Open { .. } => 3,
             Self::Timeout => 4,
             Self::HeadsetNotConnected => 5,
-            Self::Init(_) | Self::HidWrite(_) | Self::HidRead(_) => 1,
+            Self::Init(_) | Self::HidWrite(_) | Self::HidRead(_) | Self::Output(_) => 1,
         }
     }
 }
@@ -72,6 +75,7 @@ impl fmt::Display for AppError {
             Self::HidWrite(msg) => write!(f, "failed to send command: {msg}"),
             Self::HidRead(msg) => write!(f, "failed to read device response: {msg}"),
             Self::Timeout => write!(f, "device did not respond"),
+            Self::Output(msg) => write!(f, "failed to write output: {msg}"),
             Self::HeadsetNotConnected => write!(
                 f,
                 "the dongle is connected but the headset is not on its 2.4 GHz link \

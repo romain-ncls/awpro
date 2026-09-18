@@ -13,6 +13,7 @@ use hidapi::HidDevice;
 use serde_json::{Value, json};
 
 use crate::error::AppError;
+use crate::output;
 use crate::protocol::{self, Notification, field};
 
 /// Width of the label column, matching `status` so the two read alike.
@@ -103,10 +104,19 @@ pub fn run(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
         else {
             continue;
         };
-        if json {
-            println!("{}", event.json);
+        let line = if json {
+            event.json.to_string()
         } else {
-            println!("{:<LABEL_WIDTH$}{}", event.label, event.plain);
+            format!("{:<LABEL_WIDTH$}{}", event.label, event.plain)
+        };
+        // `awpro watch | head -1` is the natural way to wait for one event.
+        // The reader closing the pipe is that working, so stop cleanly rather
+        // than panicking the way `println!` would.
+        if let Err(e) = output::write_line(&line) {
+            if output::reader_went_away(&e) {
+                return Ok(());
+            }
+            return Err(AppError::Output(e.to_string()));
         }
     }
 }
