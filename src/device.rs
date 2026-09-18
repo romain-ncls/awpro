@@ -139,7 +139,15 @@ fn drain(device: &HidDevice) -> bool {
 /// reads byte 8, the last byte inside it.) Adding a bound would turn working
 /// queries into timeouts with no way to retest them, for no benefit.
 pub fn query(device: &HidDevice, func: u8) -> Result<Reply, AppError> {
-    let req = protocol::get_frame(func);
+    query_frame(device, protocol::get_frame(func), func)
+}
+
+/// Query `func` with parameters. Only `op::IDENTITY` needs them.
+pub fn query_with_params(device: &HidDevice, func: u8, params: &[u8]) -> Result<Reply, AppError> {
+    query_frame(device, protocol::get_frame_with_params(func, params), func)
+}
+
+fn query_frame(device: &HidDevice, req: [u8; REPORT_LEN], func: u8) -> Result<Reply, AppError> {
     device
         .send_feature_report(&req)
         .map_err(|e| AppError::HidWrite(e.to_string()))?;

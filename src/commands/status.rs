@@ -81,7 +81,7 @@ impl Status {
             self.row(
                 "wireless link",
                 "wireless_link",
-                self.wireless_link.as_ref().map(wireless_link_plain),
+                self.wireless_link.as_ref().map(output::wireless_link_plain),
             ),
         ]
     }
@@ -138,7 +138,7 @@ impl Status {
                 "saving": self.power_saving.as_ref().map(saving_json),
                 "auto_off": self.auto_off.as_ref().map(auto_off_json),
             },
-            "wireless_link": self.wireless_link.as_ref().map(wireless_link_json),
+            "wireless_link": self.wireless_link.as_ref().map(output::wireless_link_json),
         });
 
         if !self.errors.is_empty() {
@@ -267,22 +267,6 @@ fn battery_plain(level: u8, charging: Option<bool>) -> String {
     match charging {
         Some(true) => format!("{level}% (charging)"),
         _ => format!("{level}%"),
-    }
-}
-
-fn wireless_link_plain(link: &WirelessLink) -> String {
-    match link {
-        WirelessLink::Up => "up".to_string(),
-        WirelessLink::Down => "down".to_string(),
-        WirelessLink::Unknown(code) => format!("unknown (0x{code:02x})"),
-    }
-}
-
-fn wireless_link_json(link: &WirelessLink) -> Value {
-    match link {
-        WirelessLink::Up => json!({ "up": true }),
-        WirelessLink::Down => json!({ "up": false }),
-        WirelessLink::Unknown(code) => json!({ "up": null, "code": code }),
     }
 }
 

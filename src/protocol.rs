@@ -65,7 +65,19 @@ pub mod op {
     /// exactly. Notification field [`super::field::WIRELESS_LINK`] pushes the
     /// same byte.
     pub const WIRELESS_LINK: u8 = 0x09;
+    /// Headset firmware version and product ID. Query only, and only with
+    /// [`super::IDENTITY_PARAMS`] — see [`super::parse_identity`].
+    pub const IDENTITY: u8 = 0x00;
 }
+
+/// The parameters AWCC sends with [`op::IDENTITY`], and the only ones known to
+/// work.
+///
+/// 0x00 is a sub-command dispatcher: its answer depends on what it is asked.
+/// Queried with no parameters it replies `01 02 00 00`, which is something
+/// else entirely. These four bytes are copied verbatim from the capture and
+/// their individual meanings are not known.
+pub const IDENTITY_PARAMS: [u8; 4] = [0x00, 0xF5, 0x28, 0x00];
 
 /// Build a SET frame, zero-padded to a full report.
 ///
@@ -95,6 +107,24 @@ pub fn get_frame(func: u8) -> [u8; REPORT_LEN] {
     buf[0] = REPORT_ID_OUT;
     buf[1] = DIR_GET;
     buf[2] = func;
+    buf
+}
+
+/// Build a GET frame carrying parameters.
+///
+/// Only [`op::IDENTITY`] needs this; every other query is a bare opcode. The
+/// parameter count is derived rather than typed for the same reason as in
+/// [`set_frame`].
+pub fn get_frame_with_params(func: u8, params: &[u8]) -> [u8; REPORT_LEN] {
+    assert!(
+        params.len() <= REPORT_LEN - HEADER_LEN,
+        "GET frame for 0x{func:02x} carries {} params, the report holds {}",
+        params.len(),
+        REPORT_LEN - HEADER_LEN
+    );
+    let mut buf = get_frame(func);
+    buf[3] = params.len() as u8;
+    buf[HEADER_LEN..HEADER_LEN + params.len()].copy_from_slice(params);
     buf
 }
 
@@ -202,6 +232,50 @@ pub fn parse_notification(report: &[u8]) -> Option<Notification> {
         field: report[5],
         value: report[6],
     })
+}
+
+/// A firmware version, printed as `major.minor.patch`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FirmwareVersion {
+    pub major: u8,
+    pub minor: u8,
+    pub patch: u8,
+}
+
+impl std::fmt::Display for FirmwareVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+/// What the headset says it is.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Identity {
+    pub firmware: FirmwareVersion,
+    /// The *headset's* own product ID, not the transport's.
+    pub product_id: u16,
+}
+
+/// `07 C0 00 0C 00 <major> <minor> <patch> 00 <pid_lo> <pid_hi> FF 01 …`
+///
+/// The version bytes are confirmed against a headset independently known to be
+/// running 4.1.1, which answers `04 01 01`. The product ID is little-endian
+/// and reads `0xA528` — the headset's wired ID — over *both* transports, so it
+/// identifies the headset rather than the link it arrived on.
+///
+/// Byte 8 is always zero here and byte 11–12 always `FF 01`; neither has a
+/// known meaning, so neither is reported. There is no dongle firmware version
+/// in this protocol: queried with the headset off, the dongle does not answer
+/// this opcode at all.
+pub fn parse_identity(reply: &Reply) -> Identity {
+    Identity {
+        firmware: FirmwareVersion {
+            major: reply[5],
+            minor: reply[6],
+            patch: reply[7],
+        },
+        product_id: u16::from_le_bytes([reply[9], reply[10]]),
+    }
 }
 
 /// State of the 2.4 GHz link between dongle and headset.
@@ -432,6 +506,43 @@ mod tests {
             "0x07 reply"
         );
         assert_eq!(parse_notification(&hex("08c0090300")), None, "short read");
+    }
+
+    #[test]
+    fn identity_decodes_the_firmware_version_and_product_id() {
+        // The whole 12-byte payload as read over the cable. The headset was
+        // independently confirmed to be running 4.1.1, and its wired product
+        // ID is 0xA528.
+        let r = reply(&[
+            0x07, 0xC0, 0x00, 0x0C, 0x00, 0x04, 0x01, 0x01, 0x00, 0x28, 0xA5, 0xFF, 0x01, 0x00,
+            0x00, 0x00, 0x00,
+        ]);
+        let identity = parse_identity(&r);
+        assert_eq!(identity.firmware.to_string(), "4.1.1");
+        assert_eq!(identity.product_id, 0xA528);
+    }
+
+    #[test]
+    fn identity_reports_the_same_headset_over_either_transport() {
+        // Captured from AWCC over the dongle. The transport is 0xA529 there,
+        // but the headset still reports its own 0xA528 — so the product ID is
+        // the headset's, not the link's, and must not be read as the latter.
+        let over_dongle = reply(&[
+            0x07, 0xC0, 0x00, 0x0C, 0x00, 0x04, 0x01, 0x01, 0x00, 0x28, 0xA5, 0xFF, 0x01, 0x03,
+            0x00, 0x00, 0x00,
+        ]);
+        assert_eq!(parse_identity(&over_dongle).product_id, 0xA528);
+        assert_eq!(parse_identity(&over_dongle).firmware.to_string(), "4.1.1");
+    }
+
+    #[test]
+    fn the_identity_query_carries_the_parameters_awcc_sends() {
+        // Without them 0x00 answers something else entirely, so the frame has
+        // to match the capture byte for byte.
+        assert_frame(
+            &get_frame_with_params(op::IDENTITY, &IDENTITY_PARAMS),
+            &[0x06, 0xC0, 0x00, 0x04, 0x00, 0x00, 0xF5, 0x28, 0x00],
+        );
     }
 
     #[test]

@@ -32,6 +32,8 @@ pub enum Command {
     Get(GetArgs),
     /// Query every readable setting at once
     Status,
+    /// Show the headset firmware version and identity
+    Info,
     /// Follow state changes the headset pushes, until interrupted
     ///
     /// Reports changes made with the headset's own buttons too, which the

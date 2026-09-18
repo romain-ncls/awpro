@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::error::AppError;
-use crate::protocol::Anc;
+use crate::protocol::{Anc, WirelessLink};
 
 /// Print either a plain string or a JSON object depending on the `json` flag.
 pub fn print(plain: &str, json_value: Value, json: bool) {
@@ -75,5 +75,22 @@ pub fn anc_json(anc: &Anc) -> Value {
         Anc::On => json!({ "mode": "on" }),
         Anc::Transparency(level) => json!({ "mode": "transparency", "level": level }),
         Anc::Unknown(code) => json!({ "mode": "unknown", "raw": code }),
+    }
+}
+
+/// `up` / `down`, spelled the same by `status` and `info`.
+pub fn wireless_link_plain(link: &WirelessLink) -> String {
+    match link {
+        WirelessLink::Up => "up".to_string(),
+        WirelessLink::Down => "down".to_string(),
+        WirelessLink::Unknown(code) => format!("unknown (0x{code:02x})"),
+    }
+}
+
+pub fn wireless_link_json(link: &WirelessLink) -> Value {
+    match link {
+        WirelessLink::Up => json!({ "up": true }),
+        WirelessLink::Down => json!({ "up": false }),
+        WirelessLink::Unknown(code) => json!({ "up": null, "code": code }),
     }
 }
