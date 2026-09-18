@@ -3,7 +3,7 @@
 use hidapi::HidDevice;
 use serde_json::{Value, json};
 
-use crate::device;
+use crate::device::{self, Transport};
 use crate::error::AppError;
 use crate::output;
 use crate::protocol::{self, Identity, WirelessLink, op};
@@ -16,10 +16,24 @@ const LABEL_WIDTH: usize = 18;
 /// The identity query and the link query fail independently, so each is
 /// optional: a headset that answers one and not the other still prints what it
 /// did answer.
-#[derive(Debug, Default)]
+/// `transport` is not optional: it is how the device was reached, so it is
+/// known even when the device answers nothing.
+#[derive(Debug)]
 struct Info {
     identity: Option<Identity>,
+    transport: Transport,
     wireless_link: Option<WirelessLink>,
+}
+
+#[cfg(test)]
+impl Default for Info {
+    fn default() -> Self {
+        Self {
+            identity: None,
+            transport: Transport::Wired,
+            wireless_link: None,
+        }
+    }
 }
 
 impl Info {
@@ -39,6 +53,7 @@ impl Info {
                     .as_ref()
                     .map_or_else(unavailable, |i| format!("0x{:04x}", i.product_id)),
             ),
+            ("transport", self.transport.name().to_string()),
             (
                 "wireless link",
                 self.wireless_link
@@ -65,13 +80,18 @@ impl Info {
                 "patch": i.firmware.patch,
             })),
             "product_id": self.identity.as_ref().map(|i| format!("0x{:04x}", i.product_id)),
+            "transport": self.transport.name(),
             "wireless_link": self.wireless_link.as_ref().map(output::wireless_link_json),
         })
     }
 }
 
-pub fn run(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
-    let mut info = Info::default();
+pub fn run(device_handle: &HidDevice, transport: Transport, json: bool) -> Result<(), AppError> {
+    let mut info = Info {
+        identity: None,
+        transport,
+        wireless_link: None,
+    };
 
     // The identity query is the only one in the protocol that carries
     // parameters, and it answers something else without them.
@@ -113,6 +133,7 @@ mod tests {
                 },
                 product_id: 0xA528,
             }),
+            transport: Transport::Wired,
             wireless_link: Some(WirelessLink::Down),
         }
     }
@@ -124,6 +145,7 @@ mod tests {
             vec![
                 ("firmware", "4.1.1".to_string()),
                 ("product id", "0xa528".to_string()),
+                ("transport", "wired".to_string()),
                 ("wireless link", "down".to_string()),
             ]
         );
@@ -131,15 +153,30 @@ mod tests {
 
     #[test]
     fn a_field_that_could_not_be_read_says_so_rather_than_guessing() {
-        let nothing = Info::default();
+        let nothing = Info {
+            transport: Transport::Wired,
+            ..Default::default()
+        };
         assert_eq!(
             nothing.rows(),
             vec![
                 ("firmware", "unavailable".to_string()),
                 ("product id", "unavailable".to_string()),
+                // The transport is how we reached the device, so it is known
+                // even when the device itself answers nothing.
+                ("transport", "wired".to_string()),
                 ("wireless link", "unavailable".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn the_dongle_is_named_as_such() {
+        let via_dongle = Info {
+            transport: Transport::Dongle,
+            ..full()
+        };
+        assert_eq!(via_dongle.rows()[2], ("transport", "dongle".to_string()));
     }
 
     #[test]
@@ -151,6 +188,7 @@ mod tests {
             json!({
                 "firmware": { "version": "4.1.1", "major": 4, "minor": 1, "patch": 1 },
                 "product_id": "0xa528",
+                "transport": "wired",
                 "wireless_link": { "up": false }
             })
         );
