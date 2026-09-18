@@ -34,5 +34,6 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::Battery => commands::battery::run(&device, json),
         Command::Get(cmd) => commands::get::run(&device, cmd, json),
         Command::Status => commands::status::run(&device, json),
+        Command::Watch => commands::watch::run(&device, json),
     }
 }

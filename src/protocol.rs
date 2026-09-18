@@ -62,7 +62,8 @@ pub mod op {
     /// Not a setting: it reports whether the headset is on the dongle's radio
     /// link. A full sweep of all 256 opcodes found this one answering, and
     /// watching it across cable plug/unplug cycles showed it tracking the link
-    /// exactly.
+    /// exactly. Notification field [`super::field::WIRELESS_LINK`] pushes the
+    /// same byte.
     pub const WIRELESS_LINK: u8 = 0x09;
 }
 
@@ -130,6 +131,77 @@ pub fn parse_anc(reply: &Reply) -> Anc {
 /// `07 C0 0A 0A 00 00 <level>` — byte 5 is a constant 0x00, the level is at 6.
 pub fn parse_battery(reply: &Reply) -> u8 {
     reply[6]
+}
+
+// ── Notifications (report 0x08) ───────────────────────────────────────────────
+//
+// The headset pushes state changes on its own, unasked, as input reports on
+// the same vendor collection the replies arrive on. They are how a change made
+// with the headset's own buttons becomes visible; polling cannot see one
+// except by luck.
+//
+//     08 C0 09 03 00 <field> <value> <xor>
+//
+// The whole eight bytes XOR to zero. Every notification recorded from this
+// hardware checks out, so the checksum is worth enforcing: it is the only
+// thing separating a real notification from a short or torn read.
+
+/// Report ID the headset pushes notifications on.
+pub const REPORT_ID_NOTIFY: u8 = 0x08;
+
+/// A notification is exactly this long; anything shorter is a torn read.
+pub const NOTIFY_LEN: usize = 8;
+
+/// Fixed bytes 1..=4 of every notification observed.
+const NOTIFY_PREFIX: [u8; 4] = [0xC0, 0x09, 0x03, 0x00];
+
+/// Which setting a [`Notification`] is about.
+///
+/// The value byte uses the same encoding as the first payload byte of the
+/// matching `op` query, so no second decoding table is needed. The exception
+/// is [`field::ANC`], which carries only the mode — never the transparency
+/// level — so a listener that wants the level must still query [`op::ANC_GET`].
+pub mod field {
+    /// 2.4 GHz link state, the same byte as [`super::op::WIRELESS_LINK`].
+    pub const WIRELESS_LINK: u8 = 0x01;
+    /// Battery percentage.
+    pub const BATTERY: u8 = 0x02;
+    /// 0x03 on the dongle, 0x00 on the cable.
+    pub const TRANSPORT: u8 = 0x03;
+    /// Mic mute, 0 = muted, matching [`super::parse_mic_muted`].
+    pub const MIC_MUTED: u8 = 0x04;
+    /// ANC *mode* only, matching the first byte of the 0x77 reply.
+    pub const ANC: u8 = 0x05;
+    /// Mic (uplink) noise cancellation.
+    pub const MIC_NOISE_CANCEL: u8 = 0x08;
+}
+
+/// One pushed state change.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct Notification {
+    pub field: u8,
+    pub value: u8,
+}
+
+/// Decode an input report as a notification, or `None` if it is not one.
+///
+/// Rejects anything that is not report [`REPORT_ID_NOTIFY`], is shorter than
+/// [`NOTIFY_LEN`], does not carry the fixed prefix, or fails the XOR check.
+/// Sidetone, power saving and auto power-off have no field: setting them over
+/// the wire produces no notification at all, so a listener still has to query
+/// those.
+pub fn parse_notification(report: &[u8]) -> Option<Notification> {
+    let report = report.get(..NOTIFY_LEN)?;
+    if report[0] != REPORT_ID_NOTIFY || report[1..5] != NOTIFY_PREFIX {
+        return None;
+    }
+    if report.iter().fold(0u8, |acc, &b| acc ^ b) != 0 {
+        return None;
+    }
+    Some(Notification {
+        field: report[5],
+        value: report[6],
+    })
 }
 
 /// State of the 2.4 GHz link between dongle and headset.
@@ -257,6 +329,14 @@ mod tests {
         buf
     }
 
+    /// Bytes from a hex string, so captured reports can be pasted verbatim.
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex digits"))
+            .collect()
+    }
+
     #[test]
     fn set_frame_derives_the_param_count() {
         let frame = set_frame(0x42, &[0xAA, 0xBB, 0xCC]);
@@ -312,6 +392,46 @@ mod tests {
             parse_battery(&reply(&[0x07, 0xC0, 0x0A, 0x0A, 0x00, 0x00, 77])),
             77
         );
+    }
+
+    #[test]
+    fn notifications_decode_the_reports_the_headset_actually_pushed() {
+        // Every one of these is a verbatim 8-byte report recorded from the
+        // headset, in context/awcc-wireshark/notify-*.log.
+        for (raw, field, value) in [
+            ("08c009030001cc0f", field::WIRELESS_LINK, 0xCC),
+            ("08c00903000264a4", field::BATTERY, 100),
+            ("08c00903000303c2", field::TRANSPORT, 0x03),
+            ("08c00903000401c7", field::MIC_MUTED, 0x01),
+            ("08c00903000502c5", field::ANC, 0x02),
+            ("08c00903000801cb", field::MIC_NOISE_CANCEL, 0x01),
+        ] {
+            let bytes = hex(raw);
+            assert_eq!(
+                parse_notification(&bytes),
+                Some(Notification { field, value }),
+                "decoding {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_notification_with_a_broken_checksum_is_rejected() {
+        let mut bytes = hex("08c00903000502c5");
+        bytes[6] ^= 0xFF; // change the value without fixing the trailing XOR
+        assert_eq!(parse_notification(&bytes), None);
+    }
+
+    #[test]
+    fn a_report_that_is_not_a_notification_is_rejected() {
+        // A command reply on report 0x07 must never decode as a notification,
+        // and neither must a short read.
+        assert_eq!(
+            parse_notification(&hex("07c07702000104000000")),
+            None,
+            "0x07 reply"
+        );
+        assert_eq!(parse_notification(&hex("08c0090300")), None, "short read");
     }
 
     #[test]

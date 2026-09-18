@@ -5,3 +5,4 @@ pub mod mic;
 pub mod power;
 pub mod sidetone;
 pub mod status;
+pub mod watch;

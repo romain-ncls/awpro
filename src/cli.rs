@@ -32,6 +32,12 @@ pub enum Command {
     Get(GetArgs),
     /// Query every readable setting at once
     Status,
+    /// Follow state changes the headset pushes, until interrupted
+    ///
+    /// Reports changes made with the headset's own buttons too, which the
+    /// query subcommands cannot see. Sidetone, power saving and auto
+    /// power-off are not pushed and so never appear here.
+    Watch,
 }
 
 // ── anc ───────────────────────────────────────────────────────────────────────
