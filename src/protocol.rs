@@ -1,13 +1,38 @@
 //! Wire-frame construction, the opcode table, and reply decoding.
 //!
-//! Every exchange is a HID feature report. Only the leading bytes carry
-//! meaning; the rest of the report is zero padding.
+//! Only the leading bytes carry meaning; the rest of the report is zero
+//! padding.
 //!
 //! ```text
 //! SET    [0x06, 0x40, func, param_count, 0x00, params...]   62 bytes
 //! GET    [0x06, 0xC0, func]                                 62 bytes
 //! reply  [0x07, 0xC0, func, payload_len, 0x00, payload...]  63 bytes (index 0 = report ID)
 //! ```
+//!
+//! These are *not* feature reports, though this crate reaches them with the
+//! feature ioctls and the device answers. The report descriptor declares, under
+//! vendor usage page 0xFF13, report 0x06 Output and reports 0x07 and 0x08
+//! Input, and the Windows software matches it: SET_REPORT with report type
+//! Output for 0x06, GET_REPORT with type Input for 0x07. Nothing here depends
+//! on the difference, but it is worth knowing before assuming another HID stack
+//! will behave the same way — Wine, for one, refuses a feature read of 0x07
+//! because its descriptor says Input, and cannot drive this device at all.
+//!
+//! The headset also speaks a second, unrelated protocol over the *same two
+//! reports*: Airoha RACE, which is what the firmware updater uses.
+//!
+//! ```text
+//! RACE request   [0x06] [len16 LE] [05] [5A] [len16 LE] [opcode16] [params...]
+//! RACE response  [0x07] [  ...   ] [05] [5B] [len16 LE] [opcode16] [status] [payload...]
+//! ```
+//!
+//! Confirmed on the wire against this hardware: opcode `0c 0a` answers with
+//! `AB1577AM_Headset`, the SoC name. RACE is where the vendor SDK keeps NV
+//! access, partition operations and DFU, so anything of that kind would go
+//! here rather than through the opcodes below — no new transport required, only
+//! different framing. Almost none of its opcode space is known, and the parts
+//! that are unknown include partition erase and DFU entry, so it is deliberately
+//! not implemented. See `context/wine/FINDINGS.md`.
 //!
 //! The opcodes below were recovered by capturing USB traffic from the Windows
 //! app. They are *not* the function IDs found in the decompiled Airoha SDK
