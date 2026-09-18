@@ -19,6 +19,11 @@ use crate::protocol::{self, Notification, field};
 /// Width of the label column, matching `status` so the two read alike.
 const LABEL_WIDTH: usize = 18;
 
+/// How long to wait on the device before looking up to see whether anyone is
+/// still reading. Short enough that `| head -1` feels immediate, long enough
+/// that idling costs nothing.
+const READ_TIMEOUT_MS: i32 = 200;
+
 /// A notification rendered for printing: a label, a plain value, and the JSON
 /// object the same change would appear as in `status`.
 struct Event {
@@ -95,9 +100,20 @@ fn describe(notification: &Notification) -> Option<Event> {
 pub fn run(device_handle: &HidDevice, json: bool) -> Result<(), AppError> {
     let mut buf = [0u8; protocol::REPLY_LEN];
     loop {
+        // Check before blocking, not only after writing. `head -1` closes the
+        // pipe once it has its line, but that line already succeeded — the
+        // next *write* would fail, and there may not be a next event for
+        // minutes. Waiting for one would leave the command hanging long after
+        // the reader had finished with it.
+        if output::reader_gone() {
+            return Ok(());
+        }
         let read = device_handle
-            .read(&mut buf)
+            .read_timeout(&mut buf, READ_TIMEOUT_MS)
             .map_err(|e| AppError::HidRead(e.to_string()))?;
+        if read == 0 {
+            continue;
+        }
         let Some(event) = protocol::parse_notification(&buf[..read])
             .as_ref()
             .and_then(describe)

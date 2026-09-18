@@ -3,6 +3,31 @@ use serde_json::{Value, json};
 use crate::error::AppError;
 use crate::protocol::{Anc, WirelessLink};
 
+/// Whether the process on the other end of `fd` has gone away, asked without
+/// writing anything.
+///
+/// `| head -1` leaves no failed write to learn from: the line it wanted fitted
+/// in the pipe buffer and succeeded, and only the *next* write would fail. A
+/// command that then blocks waiting for the next event would sit there holding
+/// a pipe nobody is reading — which is what `awpro watch | head -1` used to do.
+/// `poll` reports `POLLERR` on the write end once the read end closes, so the
+/// question can be asked directly.
+pub fn reader_gone_fd(fd: std::os::fd::RawFd) -> bool {
+    let mut pfd = libc::pollfd {
+        fd,
+        events: 0,
+        revents: 0,
+    };
+    // Timeout 0: ask and return, never wait.
+    let ready = unsafe { libc::poll(&mut pfd, 1, 0) };
+    ready > 0 && pfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0
+}
+
+/// Whether whoever was reading our stdout has gone away.
+pub fn reader_gone() -> bool {
+    reader_gone_fd(libc::STDOUT_FILENO)
+}
+
 /// Whether a write failed because the reader closed the pipe.
 ///
 /// `head`, `grep -q` and friends do this the moment they have what they came
@@ -143,6 +168,24 @@ mod tests {
         // That is the reader saying "enough", not an error, and it is how a
         // streaming command is supposed to be stopped.
         assert!(reader_went_away(&Error::new(ErrorKind::BrokenPipe, "x")));
+    }
+
+    #[test]
+    fn a_dropped_reader_is_noticed_without_writing_anything() {
+        // This is what `| head -1` leaves behind: the line already went into
+        // the pipe buffer and succeeded, so there is no failed write to learn
+        // from. A streaming command has to be able to ask.
+        use std::os::fd::AsRawFd;
+        let (reader, writer) = std::io::pipe().expect("pipe");
+        assert!(
+            !reader_gone_fd(writer.as_raw_fd()),
+            "reader is still open, nothing should be reported"
+        );
+        drop(reader);
+        assert!(
+            reader_gone_fd(writer.as_raw_fd()),
+            "reader is gone and no write happened, so polling must say so"
+        );
     }
 
     #[test]

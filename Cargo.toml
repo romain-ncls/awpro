@@ -12,3 +12,6 @@ path = "src/main.rs"
 clap = { version = "=4.5.23", features = ["derive"] }
 hidapi = { version = "=2.6.7", default-features = false, features = ["linux-native-basic-udev"] }
 serde_json = "=1.0.133"
+# Only for poll(2): a streaming command has to notice a closed pipe while it is
+# blocked reading the device, and std has no way to ask.
+libc = "=0.2.183"
