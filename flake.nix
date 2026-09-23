@@ -39,7 +39,7 @@
           options.programs.awpro.enable = lib.mkEnableOption "awpro headset tool";
           config = lib.mkIf config.programs.awpro.enable {
             services.udev.packages = [ udev-rules ];
-            environment.systemPackages = [ self.packages.${pkgs.system}.awpro ];
+            environment.systemPackages = [ self.packages.${pkgs.stdenv.hostPlatform.system}.awpro ];
           };
         };
       devShells = forAllSystems (system: {
