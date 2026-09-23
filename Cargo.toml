@@ -3,6 +3,8 @@ name = "awpro"
 version = "0.1.0"
 edition = "2024"
 description = "CLI controller for the Dell Alienware Pro Wireless Gaming Headset"
+license = "MIT"
+repository = "https://github.com/romain-ncls/awpro"
 
 [[bin]]
 name = "awpro"
@@ -15,3 +17,20 @@ serde_json = "=1.0.133"
 # Only for poll(2): a streaming command has to notice a closed pipe while it is
 # blocked reading the device, and std has no way to ask.
 libc = "=0.2.183"
+
+[package.metadata.deb]
+maintainer = "Romain Nicolas <nicolasromain0@gmail.com>"
+copyright = "2026, Romain Nicolas"
+section = "utils"
+# The release binary is static musl, so it needs nothing from the system.
+depends = ""
+extended-description = """\
+Reads battery and link status, and sets ANC, microphone, sidetone and power, on the \
+Dell Alienware Pro Wireless Gaming Headset, over its 2.4 GHz dongle or its \
+USB-C cable. The udev rule grants the logged-in user access to the device."""
+maintainer-scripts = "packaging/debian/"
+assets = [
+    ["target/release/awpro", "usr/bin/", "755"],
+    ["packaging/70-awpro.rules", "usr/lib/udev/rules.d/", "644"],
+    ["LICENSE", "usr/share/doc/awpro/", "644"],
+]

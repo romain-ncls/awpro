@@ -1,0 +1,52 @@
+name: 'Build'
+
+# Builds the static binary and the .deb. Runs on pull requests so packaging
+# breaks before a release does, and is called by the release workflow to
+# produce the assets it uploads.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: 'read'
+
+env:
+  TARGET: 'x86_64-unknown-linux-musl'
+
+jobs:
+  build:
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: 'actions/checkout@v7'
+        with:
+          persist-credentials: false
+      - uses: 'dtolnay/rust-toolchain@stable'
+        with:
+          targets: '${{ env.TARGET }}'
+      - uses: 'taiki-e/install-action@v2'
+        with:
+          tool: 'cargo-deb'
+      - name: 'Test'
+        run: 'cargo test --locked'
+      - name: 'Build'
+        run: 'cargo build --locked --release --target "$TARGET"'
+      - name: 'Check the binary is static'
+        run: |
+          if readelf -d "target/$TARGET/release/awpro" | grep -q NEEDED; then
+            readelf -d "target/$TARGET/release/awpro"
+            exit 1
+          fi
+      - name: 'Package'
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          mkdir dist
+          cargo deb --no-build --target "$TARGET" --output dist/
+          tar -czf "dist/awpro-$version-x86_64-linux.tar.gz" \
+            -C "target/$TARGET/release" awpro \
+            -C "$GITHUB_WORKSPACE" LICENSE packaging/70-awpro.rules
+          cd dist && sha256sum -- * > SHA256SUMS
+      - uses: 'actions/upload-artifact@v7'
+        with:
+          name: 'dist'
+          path: 'dist/'
+          if-no-files-found: 'error'
