@@ -1,0 +1,77 @@
+name: 'Release'
+
+on:
+  push:
+    branches:
+      - 'main'
+
+jobs:
+  # Tags and publishes the GitHub release when a release PR has just merged.
+  release:
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: 'write'
+      pull-requests: 'read'
+    outputs:
+      created: '${{ steps.release-plz.outputs.releases_created }}'
+      tag: '${{ steps.tag.outputs.tag }}'
+    steps:
+      - &checkout
+        uses: 'actions/checkout@v7'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - &install-rust
+        uses: 'dtolnay/rust-toolchain@stable'
+      - id: 'release-plz'
+        uses: 'release-plz/action@v0.5'
+        with:
+          command: 'release'
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+      - id: 'tag'
+        if: "steps.release-plz.outputs.releases_created == 'true'"
+        env:
+          RELEASES: '${{ steps.release-plz.outputs.releases }}'
+        run: 'echo "tag=$(jq -r ".[0].tag" <<< "$RELEASES")" >> "$GITHUB_OUTPUT"'
+
+  # Opens or refreshes the release PR with the next version and changelog.
+  release-pr:
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: 'write'
+      pull-requests: 'write'
+    concurrency:
+      group: 'release-plz-${{ github.ref }}'
+      cancel-in-progress: false
+    steps:
+      - *checkout
+      - *install-rust
+      - uses: 'release-plz/action@v0.5'
+        with:
+          command: 'release-pr'
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+
+  # Built here rather than on the release event: a release created with
+  # GITHUB_TOKEN does not trigger other workflows.
+  build:
+    needs: 'release'
+    if: "needs.release.outputs.created == 'true'"
+    uses: './.github/workflows/build.yaml'
+
+  upload:
+    needs: ['release', 'build']
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: 'write'
+    steps:
+      - uses: 'actions/download-artifact@v8'
+        with:
+          name: 'dist'
+          path: 'dist/'
+      - name: 'Attach assets to the release'
+        env:
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          TAG: '${{ needs.release.outputs.tag }}'
+        run: 'gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY"'

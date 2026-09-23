@@ -1,0 +1,9 @@
+[workspace]
+# Versions live in git tags only: awpro is not published to crates.io.
+publish = false
+git_only = true
+features_always_increment_minor = true
+# Release only when a release PR is merged, never on an ordinary push.
+release_always = false
+git_tag_enable = true
+git_release_enable = true
