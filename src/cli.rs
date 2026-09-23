@@ -3,7 +3,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[derive(Parser)]
 #[command(
     name = "awpro",
-    about = "Control the Dell Alienware Pro Wireless Gaming Headset"
+    about = "Control the Dell Alienware Pro Wireless Gaming Headset",
+    version
 )]
 pub struct Cli {
     /// Output results as JSON
