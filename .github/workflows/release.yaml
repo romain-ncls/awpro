@@ -74,4 +74,5 @@ jobs:
         env:
           GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           TAG: '${{ needs.release.outputs.tag }}'
-        run: 'gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY"'
+        # --clobber: a re-run rebuilds the assets and replaces them.
+        run: 'gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"'
