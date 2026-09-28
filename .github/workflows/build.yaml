@@ -1,8 +1,8 @@
 name: 'Build'
 
-# Builds the static binary and the .deb. Runs on pull requests so packaging
-# breaks before a release does, and is called by the release workflow to
-# produce the assets it uploads.
+# Builds the static binary, the .deb and the Arch package. Runs on pull
+# requests so packaging breaks before a release does, and is called by the
+# release workflow to produce the assets it uploads.
 on:
   pull_request:
   workflow_call:
@@ -39,12 +39,34 @@ jobs:
       - name: 'Package'
         run: |
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          echo "VERSION=$version" >> "$GITHUB_ENV"
           mkdir dist
           cargo deb --no-build --target "$TARGET" --output dist/
           tar -czf "dist/awpro-$version-x86_64-linux.tar.gz" \
             -C "target/$TARGET/release" awpro \
             -C "$GITHUB_WORKSPACE" LICENSE packaging/70-awpro.rules
-          cd dist && sha256sum -- * > SHA256SUMS
+      # Repackages the tarball above. makepkg refuses to run as root, hence the
+      # extra user; installing the result checks the package, not just the build.
+      - name: 'Package for Arch Linux'
+        run: |
+          tarball="awpro-$VERSION-x86_64-linux.tar.gz"
+          build="$RUNNER_TEMP/arch"
+          mkdir "$build"
+          cp packaging/arch/PKGBUILD "dist/$tarball" "$build/"
+          sed -i \
+            -e "s/^pkgver=.*/pkgver=$VERSION/" \
+            -e "s/^sha256sums=.*/sha256sums=('$(sha256sum "dist/$tarball" | cut -d' ' -f1)')/" \
+            "$build/PKGBUILD"
+          docker run --rm -v "$build:/build" -w /build archlinux:base-devel bash -euc '
+            useradd builder
+            chown -R builder .
+            runuser -u builder -- makepkg
+            pacman -U --noconfirm ./*.pkg.tar.zst
+            awpro --version
+          '
+          cp "$build"/*.pkg.tar.zst dist/
+      - name: 'Checksum'
+        run: 'cd dist && sha256sum -- * > SHA256SUMS'
       - uses: 'actions/upload-artifact@v7'
         with:
           name: 'dist'

@@ -31,7 +31,7 @@
           udev-rules = pkgs.writeTextFile {
             name = "awpro-udev-rules";
             destination = "/lib/udev/rules.d/70-awpro.rules";
-            # Shared with the .deb, which installs the same file.
+            # Shared with the .deb and the Arch package, which install the same file.
             text = builtins.readFile ./packaging/70-awpro.rules;
           };
         in
