@@ -48,6 +48,16 @@ sudo apt install ./awpro_*_amd64.deb
 
 The package ships the udev rule and reloads udev for you, so an already-plugged-in headset works right away.
 
+### Arch Linux / Omarchy
+
+Download the `.pkg.tar.zst` from the [latest release](https://github.com/romain-ncls/awpro/releases/latest) and install it:
+
+```sh
+sudo pacman -U ./awpro-*-x86_64.pkg.tar.zst
+```
+
+As with the `.deb`, the udev rule is installed and applied for you.
+
 ### NixOS (flake)
 
 ```nix
@@ -180,7 +190,7 @@ cargo test
 cargo build --release
 ```
 
-Releases are cut by [release-plz](https://release-plz.dev) from [Conventional Commits](https://www.conventionalcommits.org). CI then attaches the static binary, the `.deb` and the checksums to the GitHub release. See [CHANGELOG.md](CHANGELOG.md) for the history.
+Releases are cut by [release-plz](https://release-plz.dev) from [Conventional Commits](https://www.conventionalcommits.org). CI then attaches the static binary, the `.deb`, the Arch package and the checksums to the GitHub release. See [CHANGELOG.md](CHANGELOG.md) for the history.
 
 ## ⚠️ Disclaimer
 

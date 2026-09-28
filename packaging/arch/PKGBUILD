@@ -1,0 +1,25 @@
+# Maintainer: Romain Nicolas <nicolasromain0@gmail.com>
+
+# Repackages the static release tarball. CI sets pkgver and the checksum on
+# every build and puts the tarball it just built next to this file, so makepkg
+# never downloads it.
+pkgname=awpro
+pkgver=0.2.1
+pkgrel=1
+pkgdesc='CLI controller for the Dell Alienware Pro Wireless Gaming Headset'
+arch=('x86_64')
+url='https://github.com/romain-ncls/awpro'
+license=('MIT')
+# Ship the binary exactly as released, so it matches SHA256SUMS. It is static
+# musl and needs nothing from the system.
+options=('!strip' '!debug')
+source=("$url/releases/download/v$pkgver/$pkgname-$pkgver-x86_64-linux.tar.gz")
+sha256sums=('13409db6476d24bd1599c578d518249a0c93bc7764593ec4778580f045d3223f')
+
+package() {
+  install -Dm755 awpro -t "$pkgdir/usr/bin/"
+  # No install script: systemd's pacman hook reloads the rules and re-triggers
+  # devices, so an already-plugged-in headset works right away.
+  install -Dm644 packaging/70-awpro.rules -t "$pkgdir/usr/lib/udev/rules.d/"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname/"
+}
